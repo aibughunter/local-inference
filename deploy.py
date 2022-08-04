@@ -1,15 +1,21 @@
+import ast
 import json
+import subprocess
 from xmlrpc.client import boolean
 from transformers import RobertaTokenizer
-import torch 
+import torch
 import onnxruntime
 from flask import Flask, request
 import numpy as np
 import pickle
+import sys
+import os
 
-app = Flask(__name__)
+provider = ["CPUExecutionProvider"]
+path = os.path.dirname(os.path.realpath(__file__))
 
-def main(code: list, gpu:boolean) -> dict:
+
+def main(code: list) -> dict:
     """Generate vulnerability predictions and line scores.
     Parameters
     ----------
@@ -23,19 +29,18 @@ def main(code: list, gpu:boolean) -> dict:
         "batch_vul_pred_prob" stores a list of vulnerability prediction probabilities [0.89, 0.75, ...] corresponding to "batch_vul_pred"
         "batch_line_scores" stores line scores as a 2D list [[att_score_0, att_score_1, ..., att_score_n], ...]
     """
+
     DEVICE = "cpu"
     MAX_LENGTH = 512
-    provider = ["CPUExecutionProvider"]
 
-    if gpu:
-        provider.insert(0, "CUDAExecutionProvider")
-    
-    print("Using providers: ", provider)
+    # print("Using providers: ", provider)
+
     # load tokenizer
-    tokenizer = RobertaTokenizer.from_pretrained("./linevul_tokenizer")
-    model_input = tokenizer(code, truncation=True, max_length=MAX_LENGTH, padding='max_length', return_tensors="pt").input_ids
+    tokenizer = RobertaTokenizer.from_pretrained(path + "/linevul_tokenizer")
+    model_input = tokenizer(code, truncation=True, max_length=MAX_LENGTH, padding='max_length',
+                            return_tensors="pt").input_ids
     # onnx runtime session
-    ort_session = onnxruntime.InferenceSession("./saved_models/onnx_checkpoint/linevul.onnx", providers=provider)
+    ort_session = onnxruntime.InferenceSession(path + "/saved_models/onnx_checkpoint/linevul.onnx", providers=provider)
     # compute ONNX Runtime output prediction
     ort_inputs = {ort_session.get_inputs()[0].name: to_numpy(model_input)}
     prob, attentions = ort_session.run(None, ort_inputs)
@@ -61,7 +66,7 @@ def main(code: list, gpu:boolean) -> dict:
                 att_weight_sum += layer_attention
         # normalize attention score
         att_weight_sum -= att_weight_sum.min()
-        att_weight_sum /= att_weight_sum.max()     
+        att_weight_sum /= att_weight_sum.max()
         batch_att_weight_sum.append(att_weight_sum)
     # batch_line_scores (2D list with shape of [batch size, seq length]): [[att_score_0, att_score_1, ..., att_score_n], ...]
     batch_line_scores = []
@@ -77,8 +82,11 @@ def main(code: list, gpu:boolean) -> dict:
     # batch_vul_pred_prob (1D list with shape of [batch_size]): [prob_1, prob_2, ..., prob_n]
     batch_vul_pred_prob = []
     for i in range(len(prob)):
-        batch_vul_pred_prob.append(prob[i][batch_vul_pred[i]].item()) # .item() added to prevent 'Object of type float32 is not JSON serializable' error
-    return {"batch_vul_pred": batch_vul_pred, "batch_vul_pred_prob": batch_vul_pred_prob, "batch_line_scores": batch_line_scores}
+        batch_vul_pred_prob.append(prob[i][batch_vul_pred[
+            i]].item())  # .item() added to prevent 'Object of type float32 is not JSON serializable' error
+    return {"batch_vul_pred": batch_vul_pred, "batch_vul_pred_prob": batch_vul_pred_prob,
+            "batch_line_scores": batch_line_scores}
+
 
 def get_word_att_scores(tokens: list, att_scores: list) -> list:
     word_att_scores = []
@@ -86,6 +94,7 @@ def get_word_att_scores(tokens: list, att_scores: list) -> list:
         token, att_score = tokens[i], att_scores[i]
         word_att_scores.append([token, att_score])
     return word_att_scores
+
 
 def get_all_lines_score(word_att_scores: list):
     # word_att_scores -> [[token, att_value], [token, att_value], ...]
@@ -109,25 +118,25 @@ def get_all_lines_score(word_att_scores: list):
             score_sum += word_att_scores[i][1]
     return all_lines_score
 
+
 def clean_special_token_values(all_values, padding=False):
-    # special token in the beginning of the seq 
+    # special token in the beginning of the seq
     all_values[0] = 0
     if padding:
         # get the last non-zero value which represents the att score for </s> token
         idx = [index for index, item in enumerate(all_values) if item != 0][-1]
         all_values[idx] = 0
     else:
-        # special token in the end of the seq 
+        # special token in the end of the seq
         all_values[-1] = 0
     return all_values
 
-def main_cve(code: list, gpu:boolean) -> dict:
+
+def main_cwe(code: list) -> dict:
     DEVICE = "cpu"
     MAX_LENGTH = 512
 
-    provider = ["CPUExecutionProvider"]
-    if gpu:
-        provider.insert(0, "CUDAExecutionProvider")
+    # print("Using providers: ", provider)
 
     with open("./label_map.pkl", "rb") as f:
         cwe_id_map, cwe_type_map = pickle.load(f)
@@ -137,7 +146,7 @@ def main_cve(code: list, gpu:boolean) -> dict:
     tokenizer.cls_type_token = "<cls_type>"
     model_input = []
     for c in code:
-        code_tokens = tokenizer.tokenize(str(c))[:MAX_LENGTH-3]
+        code_tokens = tokenizer.tokenize(str(c))[:MAX_LENGTH - 3]
         source_tokens = [tokenizer.cls_token] + code_tokens + [tokenizer.cls_type_token] + [tokenizer.sep_token]
         input_ids = tokenizer.convert_tokens_to_ids(source_tokens)
         padding_length = MAX_LENGTH - len(input_ids)
@@ -170,7 +179,8 @@ def main_cve(code: list, gpu:boolean) -> dict:
             "cwe_type": batch_cwe_type_pred,
             "cwe_type_prob": batch_cwe_type_pred_prob}
 
-def main_sev(code: list, gpu:boolean) -> dict:
+
+def main_sev(code: list) -> dict:
     """Generate CVSS severity score predictions.
     Parameters
     ----------
@@ -186,13 +196,12 @@ def main_sev(code: list, gpu:boolean) -> dict:
     DEVICE = "cpu"
     MAX_LENGTH = 512
 
-    provider = ["CPUExecutionProvider"]
-    if gpu:
-        provider.insert(0, "CUDAExecutionProvider")
+    # print("Using providers: ", provider)
 
     # load tokenizer
     tokenizer = RobertaTokenizer.from_pretrained("./linevul_tokenizer")
-    model_input = tokenizer(code, truncation=True, max_length=MAX_LENGTH, padding='max_length', return_tensors="pt").input_ids
+    model_input = tokenizer(code, truncation=True, max_length=MAX_LENGTH, padding='max_length',
+                            return_tensors="pt").input_ids
     # onnx runtime session
     ort_session = onnxruntime.InferenceSession("./saved_models/onnx_checkpoint/sev_model.onnx", providers=provider)
     # compute ONNX Runtime output prediction
@@ -213,69 +222,27 @@ def main_sev(code: list, gpu:boolean) -> dict:
             batch_sev_class.append("Critical")
     return {"batch_sev_score": batch_sev_score, "batch_sev_class": batch_sev_class}
 
+
 def to_numpy(tensor):
     """ get np input for onnx runtime model """
     return tensor.detach().cpu().numpy() if tensor.requires_grad else tensor.cpu().numpy()
 
 
-@app.route('/api/v1/gpu/predict', methods=['POST'])
-def predict_gpu():
-    functions = request.get_json()
-    if not functions:
-        return {'error': 'No functions to process'}
-    else:
-        result = json.dumps(main(functions,True))
-        return result
-
-
-@app.route('/api/v1/cpu/predict', methods=['POST'])
-def predict_cpu():
-    functions = request.get_json()
-    if not functions:
-        return {'error': 'No functions to process'}
-    else:
-        result = json.dumps(main(functions,False))
-        return result
-
-@app.route('/api/v1/gpu/cwe', methods=['POST'])
-def cve_gpu():
-    code = request.get_json()
-    if not code:
-        return {'error': 'No code to process'}
-    else:
-        result = json.dumps(main_cve(code, True))
-        return result
-
-@app.route('/api/v1/cpu/cwe', methods=['POST'])
-def cve_cpu():
-    code = request.get_json()
-    if not code:
-        return {'error': 'No code to process'}
-    else:
-        result = json.dumps(main_cve(code, False))
-        return result
-
-@app.route('/api/v1/gpu/sev' , methods=['POST'])
-def sev_gpu():
-    code = request.get_json()
-    if not code:
-        return {'error': 'No code to process'}
-    else:
-        result = json.dumps(main_sev(code, True))
-        return result
-
-@app.route('/api/v1/cpu/sev' , methods=['POST'])
-def sev_cpu():
-    code = request.get_json()
-    if not code:
-        return {'error': 'No code to process'}
-    else:
-        result = json.dumps(main_sev(code, False))
-        return result
-
-
 if __name__ == "__main__":
-    app.run(host="localhost", port=5000)
-    #  thislist = ["apple", "banana", "cherry"];
-    #  print(main_sev(thislist))
-    # print("Hello")
+
+    mode = sys.argv[1]
+    gpu = sys.argv[2]
+
+    code: list = []
+    for line in sys.stdin:
+        code = json.loads(line)
+
+    if gpu == "True":
+        provider.insert(0, "CUDAExecutionProvider")
+
+    if mode == "line":
+        print(json.dumps(main(code)))
+    elif mode == "cwe":
+        print(json.dumps(main_cwe(code)))
+    elif mode == "sev":
+        print(json.dumps(main_sev(code)))
