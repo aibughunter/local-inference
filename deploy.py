@@ -141,7 +141,7 @@ def main_cwe(code: list) -> dict:
     with open("./label_map.pkl", "rb") as f:
         cwe_id_map, cwe_type_map = pickle.load(f)
     # load tokenizer
-    tokenizer = RobertaTokenizer.from_pretrained("./linevul_tokenizer")
+    tokenizer = RobertaTokenizer.from_pretrained(path + "/linevul_tokenizer")
     tokenizer.add_tokens(["<cls_type>"])
     tokenizer.cls_type_token = "<cls_type>"
     model_input = []
@@ -154,7 +154,7 @@ def main_cwe(code: list) -> dict:
         model_input.append(input_ids)
     model_input = torch.tensor(model_input, device=DEVICE)
     # onnx runtime session
-    ort_session = onnxruntime.InferenceSession("./saved_models/onnx_checkpoint/movul.onnx", providers=provider)
+    ort_session = onnxruntime.InferenceSession(path + "/saved_models/onnx_checkpoint/movul.onnx", providers=provider)
     # compute ONNX Runtime output prediction
     ort_inputs = {ort_session.get_inputs()[0].name: to_numpy(model_input)}
     cwe_id_prob, cwe_type_prob = ort_session.run(None, ort_inputs)
@@ -199,11 +199,11 @@ def main_sev(code: list) -> dict:
     # print("Using providers: ", provider)
 
     # load tokenizer
-    tokenizer = RobertaTokenizer.from_pretrained("./linevul_tokenizer")
+    tokenizer = RobertaTokenizer.from_pretrained(path + "/linevul_tokenizer")
     model_input = tokenizer(code, truncation=True, max_length=MAX_LENGTH, padding='max_length',
                             return_tensors="pt").input_ids
     # onnx runtime session
-    ort_session = onnxruntime.InferenceSession("./saved_models/onnx_checkpoint/sev_model.onnx", providers=provider)
+    ort_session = onnxruntime.InferenceSession(path + "/saved_models/onnx_checkpoint/sev_model.onnx", providers=provider)
     # compute ONNX Runtime output prediction
     ort_inputs = {ort_session.get_inputs()[0].name: to_numpy(model_input)}
     cvss_score = ort_session.run(None, ort_inputs)
