@@ -11,14 +11,15 @@ import pickle
 import sys
 import os
 
-provider = ["CPUExecutionProvider"]
 path = os.path.dirname(os.path.realpath(__file__))
 
 
-def main(code: list) -> dict:
+def main(code: list, gpu: boolean = False) -> dict:
     """Generate vulnerability predictions and line scores.
     Parameters
     ----------
+    gpu : boolean
+        Defines CUDA inference
     code : :obj:`list`
         A list of String functions.
     Returns
@@ -33,8 +34,11 @@ def main(code: list) -> dict:
     DEVICE = "cpu"
     MAX_LENGTH = 512
 
-    # print("Using providers: ", provider)
+    provider = ["CPUExecutionProvider"]
+    if gpu:
+        provider.insert(0, "CUDAExecutionProvider")
 
+    # print(provider)
     # load tokenizer
     tokenizer = RobertaTokenizer.from_pretrained(path + "/linevul_tokenizer")
     model_input = tokenizer(code, truncation=True, max_length=MAX_LENGTH, padding='max_length',
@@ -132,13 +136,15 @@ def clean_special_token_values(all_values, padding=False):
     return all_values
 
 
-def main_cwe(code: list) -> dict:
+def main_cwe(code: list, gpu: boolean = False) -> dict:
     DEVICE = "cpu"
     MAX_LENGTH = 512
 
-    # print("Using providers: ", provider)
+    provider = ["CPUExecutionProvider"]
+    if gpu:
+        provider.insert(0, "CUDAExecutionProvider")
 
-    with open("./label_map.pkl", "rb") as f:
+    with open(path + "/label_map.pkl", "rb") as f:
         cwe_id_map, cwe_type_map = pickle.load(f)
     # load tokenizer
     tokenizer = RobertaTokenizer.from_pretrained(path + "/linevul_tokenizer")
@@ -180,7 +186,7 @@ def main_cwe(code: list) -> dict:
             "cwe_type_prob": batch_cwe_type_pred_prob}
 
 
-def main_sev(code: list) -> dict:
+def main_sev(code: list, gpu: boolean = False) -> dict:
     """Generate CVSS severity score predictions.
     Parameters
     ----------
@@ -196,14 +202,17 @@ def main_sev(code: list) -> dict:
     DEVICE = "cpu"
     MAX_LENGTH = 512
 
-    # print("Using providers: ", provider)
+    provider = ["CPUExecutionProvider"]
+    if gpu:
+        provider.insert(0, "CUDAExecutionProvider")
 
     # load tokenizer
     tokenizer = RobertaTokenizer.from_pretrained(path + "/linevul_tokenizer")
     model_input = tokenizer(code, truncation=True, max_length=MAX_LENGTH, padding='max_length',
                             return_tensors="pt").input_ids
     # onnx runtime session
-    ort_session = onnxruntime.InferenceSession(path + "/saved_models/onnx_checkpoint/sev_model.onnx", providers=provider)
+    ort_session = onnxruntime.InferenceSession(path + "/saved_models/onnx_checkpoint/sev_model.onnx",
+                                               providers=provider)
     # compute ONNX Runtime output prediction
     ort_inputs = {ort_session.get_inputs()[0].name: to_numpy(model_input)}
     cvss_score = ort_session.run(None, ort_inputs)
@@ -234,15 +243,20 @@ if __name__ == "__main__":
     gpu = sys.argv[2]
 
     code: list = []
+
+    if gpu == "True":
+        gpu = True
+    else:
+        gpu = False
+
     for line in sys.stdin:
         code = json.loads(line)
 
-    if gpu == "True":
-        provider.insert(0, "CUDAExecutionProvider")
+    # print(provider)
 
     if mode == "line":
-        print(json.dumps(main(code)))
+        print(json.dumps(main(code, gpu)))
     elif mode == "cwe":
-        print(json.dumps(main_cwe(code)))
+        print(json.dumps(main_cwe(code, gpu)))
     elif mode == "sev":
-        print(json.dumps(main_sev(code)))
+        print(json.dumps(main_sev(code, gpu)))
