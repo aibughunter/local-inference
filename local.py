@@ -1,12 +1,13 @@
 import json
 import sys
-
 from transformers import RobertaTokenizer, T5ForConditionalGeneration, T5Config
 import torch
 import onnxruntime
 import numpy as np
 import pickle
+import os
 
+path = os.path.dirname(os.path.realpath(__file__))
 
 def main(code: list, gpu: bool = False) -> dict:
     """Generate vulnerability predictions and line scores.
@@ -26,11 +27,11 @@ def main(code: list, gpu: bool = False) -> dict:
     """
     provider = ["CUDAExecutionProvider", "CPUExecutionProvider"] if gpu else ["CPUExecutionProvider"]
     # load tokenizer
-    tokenizer = RobertaTokenizer.from_pretrained("./inference-common/tokenizer")
+    tokenizer = RobertaTokenizer.from_pretrained(path + "/inference-common/tokenizer")
     model_input = tokenizer(code, truncation=True, max_length=512, padding='max_length',
                             return_tensors="pt").input_ids
     # onnx runtime session
-    ort_session = onnxruntime.InferenceSession("./models/linevul.onnx", providers=provider)
+    ort_session = onnxruntime.InferenceSession(path + "/models/line_model.onnx", providers=provider)
     # compute ONNX Runtime output prediction
     ort_inputs = {ort_session.get_inputs()[0].name: to_numpy(model_input)}
     prob, attentions = ort_session.run(None, ort_inputs)
@@ -141,10 +142,10 @@ def main_cwe(code: list, gpu: bool = False) -> dict:
         "cwe_type_prob" stores a list of confidence scores of CWE abstract types predictions [0.9, 0.7, ...]
     """
     provider = ["CUDAExecutionProvider", "CPUExecutionProvider"] if gpu else ["CPUExecutionProvider"]
-    with open("./inference-common/label_map.pkl", "rb") as f:
+    with open(path + "/inference-common/label_map.pkl", "rb") as f:
         cwe_id_map, cwe_type_map = pickle.load(f)
     # load tokenizer
-    tokenizer = RobertaTokenizer.from_pretrained("./inference-common/tokenizer")
+    tokenizer = RobertaTokenizer.from_pretrained(path + "/inference-common/tokenizer")
     tokenizer.add_tokens(["<cls_type>"])
     tokenizer.cls_type_token = "<cls_type>"
     model_input = []
@@ -158,7 +159,7 @@ def main_cwe(code: list, gpu: bool = False) -> dict:
     device = "cuda" if gpu else "cpu"
     model_input = torch.tensor(model_input, device=device)
     # onnx runtime session
-    ort_session = onnxruntime.InferenceSession("./models/movul.onnx", providers=provider)
+    ort_session = onnxruntime.InferenceSession(path + "/models/cwe_model.onnx", providers=provider)
     # compute ONNX Runtime output prediction
     ort_inputs = {ort_session.get_inputs()[0].name: to_numpy(model_input)}
     cwe_id_prob, cwe_type_prob = ort_session.run(None, ort_inputs)
@@ -201,11 +202,11 @@ def main_sev(code: list, gpu: bool = False) -> dict:
     """
     provider = ["CUDAExecutionProvider", "CPUExecutionProvider"] if gpu else ["CPUExecutionProvider"]
     # load tokenizer
-    tokenizer = RobertaTokenizer.from_pretrained("./inference-common/tokenizer")
+    tokenizer = RobertaTokenizer.from_pretrained(path + "/inference-common/tokenizer")
     model_input = tokenizer(code, truncation=True, max_length=512, padding='max_length',
                             return_tensors="pt").input_ids
     # onnx runtime session
-    ort_session = onnxruntime.InferenceSession("./models/sev_model.onnx", providers=provider)
+    ort_session = onnxruntime.InferenceSession(path + "/models/sev_model.onnx", providers=provider)
     # compute ONNX Runtime output prediction
     ort_inputs = {ort_session.get_inputs()[0].name: to_numpy(model_input)}
     cvss_score = ort_session.run(None, ort_inputs)
@@ -243,12 +244,12 @@ def main_repair(code: list, max_repair_length: int = 256, gpu: bool = False) -> 
     """
     device = "cuda" if gpu else "cpu"
     # load tokenizer
-    tokenizer = RobertaTokenizer.from_pretrained("./inference-common/repair_tokenizer")
+    tokenizer = RobertaTokenizer.from_pretrained(path + "/inference-common/repair_tokenizer")
     tokenizer.add_tokens(["<S2SV_StartBug>", "<S2SV_EndBug>", "<S2SV_blank>", "<S2SV_ModStart>", "<S2SV_ModEnd>"])
-    config = T5Config.from_pretrained("./inference-common/repair_model_config.json")
+    config = T5Config.from_pretrained(path + "/inference-common/repair_model_config.json")
     model = T5ForConditionalGeneration(config=config)
     model.resize_token_embeddings(len(tokenizer))
-    model.load_state_dict(torch.load("./saved_models/checkpoint-best-loss/repair_model.bin", map_location=device))
+    model.load_state_dict(torch.load(path + "/models/repair_model.bin", map_location=device))
     model.eval()
     input_ids = tokenizer(code, truncation=True, max_length=512, padding='max_length', return_tensors="pt").input_ids
     input_ids = input_ids.to(device)
