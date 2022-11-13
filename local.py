@@ -30,7 +30,7 @@ def main(code: list, gpu: bool = False) -> dict:
     model_input = tokenizer(code, truncation=True, max_length=512, padding='max_length',
                             return_tensors="pt").input_ids
     # onnx runtime session
-    ort_session = onnxruntime.InferenceSession("./saved_models/onnx_checkpoint/linevul.onnx", providers=provider)
+    ort_session = onnxruntime.InferenceSession("./models/linevul.onnx", providers=provider)
     # compute ONNX Runtime output prediction
     ort_inputs = {ort_session.get_inputs()[0].name: to_numpy(model_input)}
     prob, attentions = ort_session.run(None, ort_inputs)
@@ -158,7 +158,7 @@ def main_cwe(code: list, gpu: bool = False) -> dict:
     device = "cuda" if gpu else "cpu"
     model_input = torch.tensor(model_input, device=device)
     # onnx runtime session
-    ort_session = onnxruntime.InferenceSession("./saved_models/onnx_checkpoint/movul.onnx", providers=provider)
+    ort_session = onnxruntime.InferenceSession("./models/movul.onnx", providers=provider)
     # compute ONNX Runtime output prediction
     ort_inputs = {ort_session.get_inputs()[0].name: to_numpy(model_input)}
     cwe_id_prob, cwe_type_prob = ort_session.run(None, ort_inputs)
@@ -205,7 +205,7 @@ def main_sev(code: list, gpu: bool = False) -> dict:
     model_input = tokenizer(code, truncation=True, max_length=512, padding='max_length',
                             return_tensors="pt").input_ids
     # onnx runtime session
-    ort_session = onnxruntime.InferenceSession("./saved_models/onnx_checkpoint/sev_model.onnx", providers=provider)
+    ort_session = onnxruntime.InferenceSession("./models/sev_model.onnx", providers=provider)
     # compute ONNX Runtime output prediction
     ort_inputs = {ort_session.get_inputs()[0].name: to_numpy(model_input)}
     cvss_score = ort_session.run(None, ort_inputs)
